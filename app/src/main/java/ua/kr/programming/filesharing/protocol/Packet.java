@@ -12,17 +12,21 @@ import com.google.gson.annotations.SerializedName;
 public class Packet {
 	public Class getJsonClass() { return Packet.class; }
 
+	@Expose(serialize = false, deserialize = false)
+	public String jsonData;
+
+
 	protected static Gson gson = new Gson();
 	protected static CRC32 crc = new CRC32();
 
 
-	public Packet fromJson(String jsonString) {
+	public static Packet fromJson(String jsonString) {
 		Packet json = null;
 		try {
-			json = (Packet) gson.fromJson(jsonString, getJsonClass());
+			return gson.fromJson(jsonString, Packet.class);
 		} catch (Exception ex) {
+			return null;
 		}
-		return json;
 	}
 
 	public String toJson() {

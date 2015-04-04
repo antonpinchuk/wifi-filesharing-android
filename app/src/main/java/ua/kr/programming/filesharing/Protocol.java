@@ -14,39 +14,46 @@ import java.net.InetAddress;
 import java.net.SocketException;
 import java.util.Random;
 
+import ua.kr.programming.filesharing.protocol.ImAlivePacket;
 import ua.kr.programming.filesharing.protocol.UdpPacket;
 
 public class Protocol {
 	public static final int PORT = 9999;
 	public static final String TAG = "Protocol";
 
+	public EventListener listener;
+
 	private boolean started;
 
-	private DhcpInfo dhcp;
 	private DatagramSocket udpSocket;
 
-	private IAmAliveThreadThread iAmAliveThreadThread;
-	DatagramPacket iAmAliveDatagramPacket;
+	private ImAlivePacket iAmAlivePacket;
+	private DatagramPacket iAmAliveDatagramPacket;
+	private IAmAliveBroadcastThread iAmAliveThreadThread;
+	private UdpReadThread udpReadThread;
 
 	private static Random random = new Random();
 
-	public Protocol() {
+	public Protocol(EventListener _listener) {
+		listener = _listener;
+	}
+
+	public static interface EventListener {
+		public void iAmAlive(ImAlivePacket packet, InetAddress address);
 	}
 
 	public void start(Context context) {
 		started = true;
 
 		// Create I'm alive packet
-		UdpPacket iAmAlivePacket = new UdpPacket();
+		iAmAlivePacket = new ImAlivePacket();
 		iAmAlivePacket.id = random.nextInt();
 		iAmAlivePacket.type = UdpPacket.TYPE_IAMALIVE;
 		iAmAlivePacket.name = "Anton";
-		byte[] iAmAliveBuffer = iAmAlivePacket.toBuffer();
+
+		// Start "I am Alive"
 		try {
 			networkStateChanged(context);
-
-			iAmAliveDatagramPacket = new DatagramPacket(iAmAliveBuffer, iAmAliveBuffer.length,
-				getBroadcastAddress(), PORT);
 		} catch (IOException e) {
 			e.printStackTrace();
 		}
@@ -54,73 +61,126 @@ public class Protocol {
 
 	public void stop() {
 		// stop
-		stopIAmAliveThread();
+		stopUDPThreads();
 
 		started = false;
 	}
 
-	public void sendImAlive() {
-		if (dhcp == null) {
-			return;
-		}
-		try {
-			udpSocket.setBroadcast(true);
-			udpSocket.send(iAmAliveDatagramPacket);
-			// If you want to listen for a response ...
-			//byte[] buf = new byte[1024];
-			//DatagramPacket iAmAliveDatagramPacket = new DatagramPacket(buf, buf.length);
-			//udpSocket.receive(iAmAliveDatagramPacket);
-			Log.d(TAG, "IAmAlive");
-		} catch (IOException e) {
-			e.printStackTrace();
-		}
-	}
-
-
+	/**
+	 * Called at start or if WiFi enabled / disabled
+	 * @param context
+	 * @throws SocketException
+	 */
 	public void networkStateChanged(Context context) throws SocketException {
 		ConnectivityManager cm = (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
 		NetworkInfo info = cm.getActiveNetworkInfo();
 		if (started) {
+			// WiFi Enabled
 			if (info != null && info.isConnected() && info.getType() == ConnectivityManager.TYPE_WIFI) {
+				// Network interface
 				WifiManager wifi = (WifiManager) context.getSystemService(Context.WIFI_SERVICE);
-				dhcp = wifi.getDhcpInfo();
-				udpSocket = new DatagramSocket(PORT);
-				iAmAliveThreadThread = new IAmAliveThreadThread();
-				iAmAliveThreadThread.start();
+				DhcpInfo dhcp = wifi.getDhcpInfo();
+				// Create broadcast packet
+				try {
+					byte[] iAmAliveBuffer = iAmAlivePacket.toBuffer();
+					iAmAliveDatagramPacket = new DatagramPacket(iAmAliveBuffer, iAmAliveBuffer.length,
+						getBroadcastAddress(dhcp), PORT);
+				} catch (IOException e) {
+					e.printStackTrace();
+				}
+				startUDPThreads();
 			} else {
-				stopIAmAliveThread();
+				stopUDPThreads();
 			}
 		}
 	}
 
-	private void stopIAmAliveThread() {
-		if (iAmAliveThreadThread != null) {
-			iAmAliveThreadThread.interrupt(); // TODO: let it finish work
-			iAmAliveThreadThread = null;
+	private void startUDPThreads() {
+		// Create socket
+		try {
+			udpSocket = new DatagramSocket(PORT);
+			iAmAliveThreadThread = new IAmAliveBroadcastThread();
+			iAmAliveThreadThread.start();
+			udpReadThread = new UdpReadThread();
+			udpReadThread.start();
+		} catch (SocketException e) {
+			e.printStackTrace();
 		}
+	}
+
+	private void stopUDPThreads() {
+//		if (iAmAliveThreadThread != null) {
+//			iAmAliveThreadThread.interrupt(); // TODO: let it finish work
+//			iAmAliveThreadThread = null;
+//		}
 		if (udpSocket != null) {
 			udpSocket.close();
 			udpSocket = null;
 		}
-		dhcp = null;
 	}
 
-	private class IAmAliveThreadThread extends Thread {
+	private class IAmAliveBroadcastThread extends Thread {
 		@Override
 		public void run() {
 			try {
 				while (true) {
 					sleep(3000);
-					sendImAlive();
+					if (udpSocket == null) {
+						return;
+					}
+					udpSocket.setBroadcast(true);
+					udpSocket.send(iAmAliveDatagramPacket);
+					Log.d(TAG, "IAmAlive");
 				}
 			} catch (InterruptedException e) {
+				e.printStackTrace();
+			} catch (SocketException e) {
+				e.printStackTrace();
+			} catch (IOException e) {
 				e.printStackTrace();
 			}
 		}
 	};
 
+	private class UdpReadThread extends Thread {
+		@Override
+		public void run() {
+			byte[] data = new byte[1024];
+			UdpPacket packet;
+			byte[] jsonData;
+			try {
+				while (true) {
+					if (udpSocket == null) {
+						return;
+					}
+					DatagramPacket datagramPacket = new DatagramPacket(data, data.length);
+					udpSocket.receive(datagramPacket);
+					try {
+						// Parse packet
+						packet = UdpPacket.fromBuffer(datagramPacket.getData(), datagramPacket.getLength());
+					} catch (Exception e) {
+						Log.e(TAG, "UDP packet from (" + datagramPacket.getAddress().getHostAddress() + "): " + e.getMessage());
+						Log.d(TAG, datagramPacket.getData().toString());
+						continue;
+					}
+					switch (packet.type) {
+						case UdpPacket.TYPE_IAMALIVE:
+							listener.iAmAlive(
+								ImAlivePacket.fromJson(packet.jsonData),
+								datagramPacket.getAddress()
+							);
+							break;
+						default:
+							Log.d(TAG, "UDP unknown packet type: " + packet.type);
+					}
+				}
+			} catch (IOException e) {
+				e.printStackTrace();
+			}
+		}
+	};
 
-	private InetAddress getBroadcastAddress() throws IOException {
+	private InetAddress getBroadcastAddress(DhcpInfo dhcp) throws IOException {
 		int broadcast = (dhcp.ipAddress & dhcp.netmask) | ~dhcp.netmask;
 		byte[] quads = new byte[4];
 		for (int k = 0; k < 4; k++)

@@ -6,6 +6,10 @@ import android.os.Handler;
 import android.os.IBinder;
 import android.util.Log;
 
+import java.net.InetAddress;
+
+import ua.kr.programming.filesharing.protocol.ImAlivePacket;
+
 public class MainService extends Service {
 
 	public static final String TAG = "Service";
@@ -21,7 +25,7 @@ public class MainService extends Service {
 		Log.d(TAG, "Service started");
 
 		if (protocol == null) {
-			protocol = new Protocol();
+			protocol = new Protocol(listener);
 			protocol.start(getApplicationContext());
 		}
 
@@ -41,4 +45,13 @@ public class MainService extends Service {
 		protocol.stop();
 		protocol = null;
 	}
+
+
+	private Protocol.EventListener listener = new Protocol.EventListener() {
+		@Override
+		public void iAmAlive(ImAlivePacket packet, InetAddress address) {
+			Log.d(Protocol.TAG, "Received: " + packet.name + ", " + address.getHostAddress());
+		}
+	};
+
 }
