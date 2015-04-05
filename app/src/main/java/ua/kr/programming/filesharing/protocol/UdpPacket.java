@@ -11,6 +11,14 @@ public class UdpPacket extends Packet {
 	public String type;
 
 
+	public static UdpPacket fromJson(String jsonString) {
+		try {
+			return gson.fromJson(jsonString, UdpPacket.class);
+		} catch (Exception ex) {
+			return null;
+		}
+	}
+
 	public byte[] toBuffer() {
 		byte[] jsonBuffer = toJson().getBytes();
 		crc.reset();
@@ -22,15 +30,6 @@ public class UdpPacket extends Packet {
 		putArray(buffer, jsonBuffer, 8);
 		return buffer;
 	}
-
-	public static UdpPacket fromJson(String jsonString) {
-		try {
-			return gson.fromJson(jsonString, UdpPacket.class);
-		} catch (Exception ex) {
-			return null;
-		}
-	}
-
 
 	/**
 	 * Parse UDP packet

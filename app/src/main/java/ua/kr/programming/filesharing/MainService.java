@@ -6,8 +6,13 @@ import android.os.Handler;
 import android.os.IBinder;
 import android.util.Log;
 
-import java.net.InetAddress;
+import org.joda.time.DateTime;
 
+import java.net.InetAddress;
+import java.sql.Time;
+import java.util.ArrayList;
+
+import ua.kr.programming.filesharing.models.User;
 import ua.kr.programming.filesharing.protocol.ImAlivePacket;
 
 public class MainService extends Service {
@@ -16,6 +21,7 @@ public class MainService extends Service {
 
 	public static Protocol protocol;
 
+	public static ArrayList<User> users = new ArrayList<User>();
 
 	public MainService() {
 	}
@@ -27,6 +33,8 @@ public class MainService extends Service {
 		if (protocol == null) {
 			protocol = new Protocol(listener);
 			protocol.start(getApplicationContext());
+
+			onlineHandler.post(onlineRunnable);
 		}
 
 		return START_STICKY;
@@ -51,7 +59,34 @@ public class MainService extends Service {
 		@Override
 		public void iAmAlive(ImAlivePacket packet, InetAddress address) {
 			Log.d(Protocol.TAG, "Received: " + packet.name + ", " + address.getHostAddress());
+			for (int i = 0; i < users.size(); i++) {
+				User user = users.get(i);
+				if (user.name == packet.name && user.ip == address.getHostAddress()) {
+					return;
+				}
+			}
+			User user = new User();
+			user.name = packet.name;
+			user.ip = address.getHostAddress();
+			user.timestamp = DateTime.now().getMillis();
+			users.add(user);
+		}
+	};
+
+
+	private Handler onlineHandler = new Handler();
+	private Runnable onlineRunnable = new Runnable() {
+		@Override
+		public void run() {
+			for (int i = 0; i < users.size(); i++) {
+				User user = users.get(i);
+				if (user.timestamp + 5000 < DateTime.now().getMillis()) {
+					users.remove(i);
+				}
+			}
+			onlineHandler.postDelayed(onlineRunnable, 5000);
 		}
 	};
 
 }
+
